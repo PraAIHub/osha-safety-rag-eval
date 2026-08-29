@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -77,9 +78,32 @@ SUPERSEDED_SECTION = "1926.95"
 SUPERSEDED_DATE = "2024-11-01"
 
 
-def get(url: str, timeout: int = 60) -> bytes:
-    with urllib.request.urlopen(url, timeout=timeout) as r:
-        return r.read()
+def get(url: str, timeout: int = 60, tries: int = 4) -> bytes:
+    """Fetch with backoff on transient server errors.
+
+    eCFR returns 503 under load, and the whole-part fetch is a ~3.5 MB request,
+    so a run that pulls 1926 twice in a minute will meet one. A transient 503 is
+    not the same failure as a 404 on the pinned date — that would mean eCFR
+    stopped serving the snapshot the golden set is built on — so only the 5xx
+    family is retried, and the 4xx is left to surface immediately."""
+    for attempt in range(1, tries + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == tries:
+                raise
+            wait = 5 * 2 ** (attempt - 1)          # 5s, 10s, 20s
+            print(f"  … eCFR said {e.code}; retrying in {wait}s "
+                  f"({attempt}/{tries - 1})")
+            time.sleep(wait)
+        except urllib.error.URLError as e:
+            if attempt == tries:
+                raise
+            wait = 5 * 2 ** (attempt - 1)
+            print(f"  … {e.reason}; retrying in {wait}s ({attempt}/{tries - 1})")
+            time.sleep(wait)
+    raise RuntimeError("unreachable")
 
 
 def current_date() -> str:
@@ -200,8 +224,10 @@ if __name__ == "__main__":
             print()
             write_superseded(SUPERSEDED_DATE, SUPERSEDED_SECTION)
     except urllib.error.HTTPError as e:
-        print(f"\n✗ eCFR said {e.code} {e.reason} for {date}. A 404 on the pinned "
-              f"date would mean eCFR\n  stopped serving that snapshot — check "
+        print(f"\n✗ eCFR said {e.code} {e.reason} for {date} after retries.\n"
+              f"  5xx is eCFR being busy — wait and re-run; the pinned date does "
+              f"not expire.\n"
+              f"  404 would mean it stopped serving that snapshot — check "
               f"{API}/titles.json by hand.")
         sys.exit(1)
     print("\nNext:  python rag.py ingest")
