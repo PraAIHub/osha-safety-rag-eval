@@ -1,5 +1,3 @@
-<title>OSHA Safety RAG Eval</title>
-
 # OSHA Safety RAG Eval
 
 A RAG system over **29 CFR 1926** (OSHA construction safety), and a **33-case
@@ -16,7 +14,7 @@ foreman is the work. So the eval here is opinionated in three ways:
 - **The corpus is pinned to a fixed date.** Every number the golden set asserts
   — 6 feet, 0.1 f/cc, 200 pounds — was read out of one specific snapshot of the
   regulation. See below.
-- **Failing cases are left failing.** Six cases fail retrieval today. None was
+- **Failing cases are left failing.** Nine of the 33 cases fail retrieval today. None was
   edited to make the suite green; each was instead checked to confirm the
   required chunk is genuinely in the index, so the failure belongs to the
   system, not the case.
