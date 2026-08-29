@@ -65,7 +65,8 @@ same corpus, same chunk count, every time, on any machine, because the fetch
 is pinned to a fixed date rather than "whatever eCFR says today."
 
 ```bash
-git clone <repo> && cd osha-safety-rag-eval
+git clone https://github.com/PraAIHub/osha-safety-rag-eval.git
+cd osha-safety-rag-eval
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
@@ -77,6 +78,15 @@ python rag.py ingest                # builds the vector index (~3,000 chunks)
 python rag.py ask "At what height does OSHA require fall protection?"
 python rag.py eval                  # run against all 33 cases in golden/golden.jsonl
 ```
+
+**How to know it worked.** `rag.py eval` on a correct setup reproduces
+retrieval **24/33** and answer **~15/33** (see `report.md` for the exact
+breakdown and why those numbers, not 33/33, are expected — several failures
+are deliberate, frozen findings, not bugs to chase). If your numbers are
+substantially different, the first two things to check are whether
+`--superseded` was actually used, and whether `.env` has the right key (a
+shell-exported key can silently shadow it — see `HANDOFF.md`'s "Diagnostic
+resolved" section for exactly this failure mode and how it was caught).
 
 **`--superseded` is not optional if you want the real 33-case eval to run
 correctly.** Without it, `fetch_osha.py` still succeeds and `rag.py ingest`
