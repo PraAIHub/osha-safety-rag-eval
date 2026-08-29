@@ -1,0 +1,22 @@
+# Runtime dependencies. Python 3.11+ (developed and verified on 3.13).
+
+# ── the LLM half — `ask` and the judged half of `eval` ──
+openai>=1.40
+python-dotenv>=1.0
+
+# ── terminal output for the traced stages ──
+rich>=13.7
+
+# ── the retrieval half — both run locally, offline, with no API key ──
+# sentence-transformers pulls torch, which is the heavy part of this file
+# (~2 GB on first install). all-MiniLM-L6-v2 itself is ~90 MB, downloaded once
+# on the first `ingest` and cached in ~/.cache/huggingface.
+chromadb>=1.0
+sentence-transformers>=3.0
+
+# Only needed for `ingest --formats pdf`. This corpus is markdown-native — eCFR
+# serves structured XML — so the default path never imports it.
+pypdf>=4.0
+
+# fetch_osha.py deliberately has no dependencies at all: urllib + ElementTree
+# from the stdlib, so the corpus can be rebuilt before anything is installed.

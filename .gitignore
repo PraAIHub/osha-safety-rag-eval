@@ -1,0 +1,26 @@
+# ── derived artifacts: everything here is regenerable, none of it is checked in ──
+
+# The fetched 29 CFR 1926 corpus (~2.7 MB of federal regulation text).
+# Regenerate: python fetch_osha.py --superseded
+# It is pinned to a fixed eCFR snapshot date, so the rebuild is byte-identical
+# on any machine, any day — which is exactly why it does not belong in git.
+corpus/
+
+# The Chroma vector index. Regenerate: python rag.py ingest
+.chroma/
+
+# Run traces — append-only, one file per working copy, no shared history value.
+rag_traces.jsonl
+
+# Secrets. .env.example is the checked-in template.
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
