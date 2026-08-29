@@ -57,24 +57,33 @@ revision, not a version bump.
 
 ## Quickstart
 
+**On a fresh clone (yours, Anil's, a new machine, anyone's) — nothing derived
+exists yet.** No `corpus/`, no `.chroma/` vector index, no `rag_traces.jsonl`.
+That's intentional (see "What's in here" below for why), not something broken.
+The five commands below rebuild all of it from scratch, deterministically —
+same corpus, same chunk count, every time, on any machine, because the fetch
+is pinned to a fixed date rather than "whatever eCFR says today."
+
 ```bash
 git clone <repo> && cd osha-safety-rag-eval
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env            # add your key — see "API key" below
-python fetch_osha.py            # pulls the pinned-date snapshot
-python rag.py ingest            # builds the vector index (~3,000 chunks)
+cp .env.example .env                # add your key — see "API key" below
+python fetch_osha.py --superseded   # pulls the pinned snapshot + the
+                                     # 1926.95 pre-amendment file 3 golden
+                                     # cases (the `superseded` type) depend on
+python rag.py ingest                # builds the vector index (~3,000 chunks)
 python rag.py ask "At what height does OSHA require fall protection?"
-python rag.py eval              # run against golden/golden.jsonl
+python rag.py eval                  # run against all 33 cases in golden/golden.jsonl
 ```
 
-Add `--superseded` to the fetch to also pull the 1926.95 pre-amendment file that
-three golden cases depend on:
-
-```bash
-python fetch_osha.py --superseded
-```
+**`--superseded` is not optional if you want the real 33-case eval to run
+correctly.** Without it, `fetch_osha.py` still succeeds and `rag.py ingest`
+still runs — nothing errors — but gold-019/020/021 will fail retrieval for a
+reason that has nothing to do with the RAG system (the file they need to find
+simply isn't there). If you ever see those three specifically failing and
+nothing else looks wrong, this is the first thing to check.
 
 **API key.** `fetch_osha.py` and `rag.py ingest` need no key at all — the corpus
 comes from a public API and the embeddings are computed locally by a small
@@ -102,8 +111,10 @@ once. After that, `ingest` is about a minute on CPU.
 | `HANDOFF.md` | Project state, decisions taken and deliberately deferred, open questions. |
 
 **Not checked in, because all of it is regenerable:** `corpus/` (rebuild with
-`fetch_osha.py` — byte-identical, that's the whole point of pinning), `.chroma/`
-(rebuild with `rag.py ingest`), and `rag_traces.jsonl`.
+`fetch_osha.py --superseded` — byte-identical, that's the whole point of
+pinning), `.chroma/` (rebuild with `rag.py ingest`), and `rag_traces.jsonl`.
+This is why the Quickstart above exists — running it is the only way anyone,
+including you on a different machine, gets from a bare clone to a working index.
 
 ## The golden set
 
