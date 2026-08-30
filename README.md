@@ -83,7 +83,9 @@ is pinned to a fixed date rather than "whatever eCFR says today."
 ```bash
 git clone https://github.com/PraAIHub/osha-safety-rag-eval.git
 cd osha-safety-rag-eval
-python -m venv .venv && source .venv/bin/activate
+
+# A venv is required, not a suggestion — see "externally-managed-environment" below.
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env                # add your key — see "API key" below
@@ -94,6 +96,21 @@ python rag.py ingest                # builds the vector index (~3,000 chunks)
 python rag.py ask "At what height does OSHA require fall protection?"
 python rag.py eval                  # run against all 33 cases in golden/golden.jsonl
 ```
+
+**If `pip install` fails with `error: externally-managed-environment`,** the venv
+step above was skipped or did not take. Debian, Ubuntu and WSL ship a
+PEP 668-marked Python that refuses system-wide installs on purpose. The fix is
+the venv, not `--break-system-packages` — that flag installs a GPU-sized torch
+into your system Python and can break OS tooling that depends on it.
+
+Two things bite here specifically:
+
+- **`python` often does not exist on Debian/Ubuntu/WSL — only `python3`.** Use
+  `python3 -m venv`. Once the venv is *activated*, plain `python` works and
+  every command below is correct as written; check with `which python`, which
+  should point inside `.venv/`.
+- **`python3 -m venv` can fail with "ensurepip is not available"** on a slim
+  image. Install it: `sudo apt install python3-venv` (or `python3-full`).
 
 **How to know it worked.** `rag.py eval` on a correct setup reproduces
 retrieval **24/33** and answer **~15/33** (see `report.md` for the exact

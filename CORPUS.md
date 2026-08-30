@@ -22,7 +22,7 @@ python fetch_osha.py --superseded
 - **1 superseded-version file** (`1926-95-superseded-pre-2024-11-01.md`) — see
   below. Only fetched with `--superseded`.
 - **`SNAPSHOT.json`** — written by every run, recording the date actually
-  fetched. `rag.py ingest` and `rag.py eval` compare it against
+  fetched **and a SHA-256 over the 29 `.md` files**. `rag.py ingest` and `rag.py eval` compare it against
   `_meta.corpus_snapshot` on line 1 of `golden/golden.jsonl` and refuse to run
   when they disagree, so the corpus and the golden set cannot silently come
   apart. Gitignored with the rest of the corpus — it describes the local build.
@@ -142,6 +142,35 @@ comfortably pre-amendment — but it is not "the last pre-amendment date," and
 anyone fetching 2024-12-20 expecting the new text will get the old one. When
 adding a trap, always confirm the boundary by fetching both sides and diffing
 the text rather than trusting the FR date.
+
+## The digest: reproducibility, checked rather than claimed
+
+Every fetch writes `corpus_sha256` into `SNAPSHOT.json` — SHA-256 over each
+`.md` file's name and raw bytes, in sorted order. `golden.jsonl`'s `_meta`
+records the expected value, and `rag.py` recomputes it live before ingest or
+eval. Current: `e53c64e43c86…` over 29 files.
+
+The snapshot *date* catches "wrong day." The digest catches three failures the
+date cannot see, all of which let the eval run and print numbers that mean
+nothing:
+
+| Failure | Why the date check misses it |
+|---|---|
+| `--superseded` was skipped | `SNAPSHOT.json` still says 2026-08-20. But gold-019 then passes **vacuously** — with the repealed text absent there is nothing to wrongly cite, so a broken system scores green on the case built to catch exactly that. |
+| The fetch died part-way | eCFR 503s under load. 20 of 29 subparts still stamps the right date; failures then read as retrieval problems. |
+| A corpus file was hand-edited | Changing "6 feet" to "5 feet" to turn a red case green is undetectable by date. |
+
+This only works because the writers pass `newline=""`. Without it Python's text
+mode rewrites `\n` to `os.linesep`, so a Windows fetch of the identical snapshot
+digests differently — while ingesting to identical chunks, because `read_text()`
+normalises line endings on the way back in. That combination is the dangerous
+one: byte-level difference, behaviourally invisible. The README has claimed
+byte-identical output since the first commit; `newline=""` is what makes the
+claim true on every platform rather than only the one it was written on.
+
+Override with `--allow-snapshot-mismatch` on `ingest`/`eval` when the difference
+is intended. Repinning the corpus means updating `_meta.corpus_sha256` alongside
+`_meta.corpus_snapshot` — same golden-set revision, one more field.
 
 ## Reproducibility
 
