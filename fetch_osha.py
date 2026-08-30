@@ -66,6 +66,7 @@ dated, exact-text supersession trap, not a synthesized one.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
@@ -184,6 +185,33 @@ def report_drift() -> None:
           f"    revision, not a version bump.\n")
 
 
+def corpus_digest(folder: Path | None = None) -> str:
+    """SHA-256 over every .md in the corpus — the reproducibility claim, checkable.
+
+    Hashes (filename, raw bytes) for each file in sorted order, so the result
+    does not depend on filesystem listing order. Raw BYTES, not decoded text:
+    the point is to catch a corpus that differs on disk, which is exactly what
+    read_text() would paper over by normalising line endings.
+
+    This is only stable across platforms because the writers above pass
+    newline="" — without it, Python's text mode rewrites "\n" to os.linesep, and
+    a Windows fetch of the identical snapshot would digest differently while
+    ingesting to identical chunks. Byte-identity was claimed in the README long
+    before anything verified it; this is the verification.
+
+    The digest deliberately covers whatever is in the folder, so a corpus
+    fetched WITHOUT --superseded digests differently from one fetched with it.
+    That is a feature: skipping the flag silently invalidates the eval (gold-019
+    stops testing anything, see README), and this turns that into a hard stop."""
+    h = hashlib.sha256()
+    for path in sorted((folder or DEST).glob("*.md")):
+        h.update(path.name.encode("utf-8"))
+        h.update(b"\0")
+        h.update(path.read_bytes())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 def write_snapshot(date: str, how: str, files: int) -> None:
     """Stamp the corpus with the snapshot it was built from.
 
@@ -198,10 +226,13 @@ def write_snapshot(date: str, how: str, files: int) -> None:
         "title": 29,
         "part": PART,
         "files": files,
+        "md_files": len(list(DEST.glob("*.md"))),
+        "corpus_sha256": corpus_digest(),
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "pinned_default": FETCH_DATE,
-    }, indent=2) + "\n", encoding="utf-8")
-    print(f"  ↓ {SNAPSHOT_FILE.name}  (corpus_snapshot={date})")
+    }, indent=2) + "\n", encoding="utf-8", newline="")
+    print(f"  ↓ {SNAPSHOT_FILE.name}  (corpus_snapshot={date}, "
+          f"sha256={corpus_digest()[:12]}…)")
 
 
 def slug(text: str) -> str:
@@ -255,7 +286,7 @@ def write_subparts(xml_bytes: bytes) -> int:
             lines.append(body)
             lines.append("")
         path = DEST / f"{letter}-{slug(title)}.md"
-        path.write_text("\n".join(lines), encoding="utf-8")
+        path.write_text("\n".join(lines), encoding="utf-8", newline="")
         print(f"  ↓ {path.name}  ({len(sections)} sections/appendices)")
         written += 1
     return written
@@ -278,7 +309,7 @@ def write_superseded(date: str, section: str) -> None:
     path = DEST / name
     path.write_text(
         f"# {section} — SUPERSEDED (text as of {date}, before the amendment)\n\n"
-        f"## {heading}\n\n{body}\n", encoding="utf-8")
+        f"## {heading}\n\n{body}\n", encoding="utf-8", newline="")
     print(f"  ↓ {path.name}  (superseded-version trap: compare against the "
           f"current text of {section} in its subpart's file)")
 
@@ -307,11 +338,15 @@ if __name__ == "__main__":
                   f"subparts before trusting a green suite.\n")
         xml_bytes = get(f"{API}/full/{date}/title-29.xml?part={PART}")
         n = write_subparts(xml_bytes)
-        write_snapshot(date, how, n)
         print(f"\n{n} subpart files written")
         if "--superseded" in sys.argv:
             print()
             write_superseded(SUPERSEDED_DATE, SUPERSEDED_SECTION)
+        # LAST, always: the digest must cover every file this run wrote,
+        # including the superseded one. Stamping before that block would hash a
+        # corpus the run is not finished building.
+        print()
+        write_snapshot(date, how, n)
     except urllib.error.HTTPError as e:
         print(f"\n✗ eCFR said {e.code} {e.reason} for {date} after retries.\n"
               f"  5xx is eCFR being busy — wait and re-run; the pinned date does "

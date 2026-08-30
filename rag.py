@@ -518,6 +518,65 @@ def load_golden() -> tuple[dict, list[dict]]:
     return meta, [r for r in rows if "_meta" not in r]
 
 
+def _digest_guard(meta: dict, allow_mismatch: bool) -> None:
+    """Right date, wrong bytes — the failures a date cannot see.
+
+    The snapshot date catches "you fetched the wrong day." It cannot catch three
+    ways the corpus goes wrong while still reporting the right date, all of which
+    let the eval run and print numbers that mean nothing:
+
+      · --superseded was skipped, so the pre-amendment file is absent. gold-019
+        then passes VACUOUSLY — its job is to check the system does not cite the
+        repealed text, and with that file gone there is nothing to wrongly cite.
+        A broken system scores green on the case built to catch exactly this.
+      · The fetch died part-way (eCFR 503s under load), leaving some subparts
+        missing. Failures then read as retrieval problems.
+      · A corpus file was hand-edited to turn a red case green.
+
+    Recomputing the digest costs one pass over ~2.7 MB. Skipped silently when the
+    golden set records no digest, so an older set still works."""
+    want = meta.get("corpus_sha256")
+    if not want:
+        return
+    # fetch_osha is stdlib-only and defines the digest; import it rather than
+    # reimplementing, since two copies of a hash algorithm drift into false
+    # mismatches. ROOT is forced onto the path so this holds when rag is
+    # imported as a module, not just run as a script from the repo root.
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from fetch_osha import corpus_digest
+    got = corpus_digest(CORPUS / "md")
+    if got == want:
+        return
+    n = len(list((CORPUS / "md").glob("*.md")))
+    hint = ("\n  Only %d .md files present. A corpus fetched WITHOUT --superseded "
+            "has 28; with it, 29.\n  If that is the difference, re-run: "
+            "[bold]python fetch_osha.py --superseded[/bold]" % n) if n < 29 else ""
+    if allow_mismatch:
+        say(f"  [yellow]! corpus digest mismatch allowed[/yellow] — "
+            f"{got[:12]}… vs expected {want[:12]}…. Scores are not comparable.")
+        return
+    say(f"[red]Corpus digest mismatch.[/red]  The snapshot date is right "
+        f"({meta.get('corpus_snapshot')}) but the bytes are not.\n"
+        f"  expected [bold]{want[:16]}…[/bold]\n"
+        f"  on disk  [bold]{got[:16]}…[/bold]{hint}\n\n"
+        f"  This means the corpus is incomplete, edited, or missing the "
+        f"superseded file — all of which\n"
+        f"  let the eval run and produce numbers that do not mean what they say."
+        f"\n\n"
+        f"  Rebuild it — the corpus is regenerable and pinned, so this always "
+        f"returns you to a known\n"
+        f"  digest and costs one download:\n"
+        f"      [bold]rm -rf corpus/ && python fetch_osha.py --superseded[/bold]"
+        f"\n\n"
+        f"  Never debug the hash itself. If you have deliberately edited the "
+        f"corpus, that is a\n"
+        f"  golden-set revision: re-verify the asserted facts and update "
+        f"_meta.corpus_sha256.\n"
+        f"  To score anyway: [bold]--allow-snapshot-mismatch[/bold]")
+    sys.exit(1)
+
+
 def snapshot_guard(allow_mismatch: bool = False) -> None:
     """Refuse to run when the corpus on disk is not the snapshot the golden set
     was verified against.
@@ -538,6 +597,7 @@ def snapshot_guard(allow_mismatch: bool = False) -> None:
         return
     got = json.loads(SNAPSHOT_FILE.read_text()).get("corpus_snapshot")
     if got == want:
+        _digest_guard(meta, allow_mismatch)
         return
     if allow_mismatch:
         say(f"  [yellow]! snapshot mismatch allowed[/yellow] — corpus {got} vs "
