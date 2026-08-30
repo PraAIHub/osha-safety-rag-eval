@@ -21,12 +21,19 @@ python fetch_osha.py --superseded
   skipped.
 - **1 superseded-version file** (`1926-95-superseded-pre-2024-11-01.md`) — see
   below. Only fetched with `--superseded`.
+- **`SNAPSHOT.json`** — written by every run, recording the date actually
+  fetched. `rag.py ingest` and `rag.py eval` compare it against
+  `_meta.corpus_snapshot` on line 1 of `golden/golden.jsonl` and refuse to run
+  when they disagree, so the corpus and the golden set cannot silently come
+  apart. Gitignored with the rest of the corpus — it describes the local build.
 
 304 sections + 40 appendices, ~420k words total, frozen at the **2026-08-20**
 snapshot — Title 29's `up_to_date_as_of` on the day this corpus was first built
 (2026-08-24). That date is hardcoded as `FETCH_DATE` in `fetch_osha.py` and is
 not derived from the clock, so the fetch reproduces this exact text on any
-machine on any day.
+machine on any day. The default run additionally reports how far live eCFR has
+moved past that pin (one `titles.json` call, advisory, `--offline` skips it) —
+the pin is reproducible, but it should never be invisible.
 
 ## The API, for reference
 

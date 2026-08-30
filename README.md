@@ -44,7 +44,26 @@ across all 29 files, ~420k words.)
 python fetch_osha.py            # the pinned 2026-08-20 snapshot — the default
 python fetch_osha.py --latest   # whatever eCFR says TODAY (warns if it has moved)
 python fetch_osha.py --date 2025-01-15   # any other point in time
+python fetch_osha.py --offline  # pinned, and skip the live drift check
 ```
+
+**The pin is enforced, not just documented.** Two mechanisms, because a pin
+nobody checks ages silently into a corpus that misstates current federal safety
+law:
+
+- Every default run makes one small call to `titles.json` and prints how far
+  live eCFR has moved past the pin. Advisory only — it never changes what gets
+  fetched, is never fatal, and `--offline` skips it.
+- Every fetch stamps `corpus/osha-1926/SNAPSHOT.json` with the date it actually
+  pulled. `golden.jsonl` carries the matching date in a `_meta` header line, and
+  **`rag.py ingest` and `rag.py eval` both refuse to run when the two disagree** —
+  so a corpus fetched with `--latest` can never be scored against numbers frozen
+  from a different snapshot without you saying so. Override with
+  `--allow-snapshot-mismatch` (results are then not comparable to `report.md`).
+
+Repinning stays a deliberate act: diff the changed subparts, re-verify the
+asserted facts, then bump both `FETCH_DATE` and `_meta.corpus_snapshot`. That is
+a golden-set revision, not a version bump.
 
 `--latest` exists for one deliberate act: checking whether the regulation has
 moved out from under the golden set. If it has, diff the changed subparts against
@@ -55,8 +74,7 @@ revision, not a version bump.
 
 ## Quickstart
 
-**On a fresh clone (yours, Anil's, a new machine, anyone's) — nothing derived
-exists yet.** No `corpus/`, no `.chroma/` vector index, no `rag_traces.jsonl`.
+**On a fresh clone, nothing derived exists yet.** No `corpus/`, no `.chroma/` vector index, no `rag_traces.jsonl`.
 That's intentional (see "What's in here" below for why), not something broken.
 The five commands below rebuild all of it from scratch, deterministically —
 same corpus, same chunk count, every time, on any machine, because the fetch
@@ -88,10 +106,14 @@ resolved" section for exactly this failure mode and how it was caught).
 
 **`--superseded` is not optional if you want the real 33-case eval to run
 correctly.** Without it, `fetch_osha.py` still succeeds and `rag.py ingest`
-still runs — nothing errors — but gold-019/020/021 will fail retrieval for a
-reason that has nothing to do with the RAG system (the file they need to find
-simply isn't there). If you ever see those three specifically failing and
-nothing else looks wrong, this is the first thing to check.
+still runs — nothing errors — but the eval is quietly invalid. gold-020 fails
+retrieval outright: it asks what 1926.95(c) said before the 2024 amendment, and
+that text is not in the corpus. Worse, **gold-019 passes vacuously** — its job is
+to verify the system does *not* cite the repealed text, and with that file absent
+there is nothing to wrongly cite, so a broken system scores green on the case
+built to catch exactly this. One case fails loudly, another lies quietly. If
+gold-020 is failing and nothing else looks wrong, this is the first thing to
+check.
 
 **API key.** `fetch_osha.py` and `rag.py ingest` need no key at all — the corpus
 comes from a public API and the embeddings are computed locally by a small
