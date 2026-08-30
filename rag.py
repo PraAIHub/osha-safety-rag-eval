@@ -563,7 +563,17 @@ def _digest_guard(meta: dict, allow_mismatch: bool) -> None:
         f"  This means the corpus is incomplete, edited, or missing the "
         f"superseded file — all of which\n"
         f"  let the eval run and produce numbers that do not mean what they say."
-        f"\n\n  To score anyway: [bold]--allow-snapshot-mismatch[/bold]")
+        f"\n\n"
+        f"  Rebuild it — the corpus is regenerable and pinned, so this always "
+        f"returns you to a known\n"
+        f"  digest and costs one download:\n"
+        f"      [bold]rm -rf corpus/ && python fetch_osha.py --superseded[/bold]"
+        f"\n\n"
+        f"  Never debug the hash itself. If you have deliberately edited the "
+        f"corpus, that is a\n"
+        f"  golden-set revision: re-verify the asserted facts and update "
+        f"_meta.corpus_sha256.\n"
+        f"  To score anyway: [bold]--allow-snapshot-mismatch[/bold]")
     sys.exit(1)
 
 

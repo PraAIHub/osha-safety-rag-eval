@@ -168,6 +168,20 @@ one: byte-level difference, behaviourally invisible. The README has claimed
 byte-identical output since the first commit; `newline=""` is what makes the
 claim true on every platform rather than only the one it was written on.
 
+One sharp edge worth knowing, because nothing in the error message implies it:
+the digest globs **every** `*.md` in `corpus/osha-1926/md/`. A stray file in that
+folder — scratch notes, an editor backup, something you were diffing — changes
+the digest even though the corpus itself is fine. So does an editor that adds a
+trailing newline on save. That is arguably correct (the corpus should be exactly
+what `fetch_osha.py` wrote, nothing more), but it will surprise someone. Keep
+working files anywhere else.
+
+Recovery is the same for every cause and never involves inspecting the hash:
+
+```bash
+rm -rf corpus/ && python fetch_osha.py --superseded
+```
+
 Override with `--allow-snapshot-mismatch` on `ingest`/`eval` when the difference
 is intended. Repinning the corpus means updating `_meta.corpus_sha256` alongside
 `_meta.corpus_snapshot` — same golden-set revision, one more field.
