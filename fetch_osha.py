@@ -4,6 +4,7 @@
     python fetch_osha.py --superseded  # + a real pre/post amendment pair
     python fetch_osha.py --latest      # whatever eCFR is current TODAY (see below)
     python fetch_osha.py --date 2025-01-15   # any other point in time
+    python fetch_osha.py --offline     # pinned, and skip the live drift check
 
 ## The pinned date is the point
 
@@ -22,13 +23,27 @@ today, or in a year, and you get byte-identical text.
 moved. If it has, diff the changed subparts against the golden set BEFORE
 repinning — that is a golden-set revision, not a fetch.
 
+A pin nobody checks is how a corpus quietly ages into misstating current federal
+safety law, so the default run now also makes one small call to titles.json and
+prints how far live eCFR has moved past the pin. It is advisory: it never changes
+what gets fetched, it is never fatal, and `--offline` skips it.
+
+Every run stamps corpus/osha-1926/SNAPSHOT.json with the date it actually
+fetched. rag.py reads that back and refuses to ingest or eval a corpus whose
+snapshot does not match the date golden.jsonl records as verified-against —
+the binding between corpus and golden set used to live only in prose.
+
 Source: eCFR's public versioner API — no key, no auth, stdlib only.
     https://www.ecfr.gov/api/versioner/v1/titles.json                     — issue dates
     https://www.ecfr.gov/api/versioner/v1/full/{date}/title-29.xml?part=1926  — full text
     https://www.ecfr.gov/api/versioner/v1/versions/title-29.json?part=1926    — amendment history
 All three were hit live while building this script (2026-08-24): Title 29 was
 "up to date as of" 2026-08-20, Part 1926 held 29 subparts / ~304 sections + 40
-appendices, and 133 of those sections have 2+ recorded amendment dates.
+appendices. Re-measured against the versions endpoint on 2026-08-29: 682 version
+records over 347 identifiers, of which 172 have 2+ version records and 51 have
+2+ DISTINCT amendment dates, across 27 distinct amendment dates for the part.
+(An earlier revision of this docstring claimed 133; that figure matches neither
+count and was not reproducible — quote the method with the number.)
 
 Each SUBPART becomes one Markdown file — 29 files, inside the brief's "30-40
 documents" range without any extra splitting. Every SECTION and APPENDIX inside
@@ -51,16 +66,23 @@ dated, exact-text supersession trap, not a synthesized one.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+# NB: `date` is deliberately NOT imported from datetime — the snapshot date moves
+# through this module as a local named `date`, and importing the class would
+# shadow it (or be shadowed by it) in __main__.
+from datetime import datetime, timezone
 from pathlib import Path
 
 API = "https://www.ecfr.gov/api/versioner/v1"
-DEST = Path(__file__).resolve().parent / "corpus" / "osha-1926" / "md"
+CORPUS = Path(__file__).resolve().parent / "corpus" / "osha-1926"
+DEST = CORPUS / "md"
+SNAPSHOT_FILE = CORPUS / "SNAPSHOT.json"
 PART = "1926"
 
 # ── the frozen snapshot ──────────────────────────────────────────────────────
@@ -71,9 +93,16 @@ PART = "1926"
 # revision and re-verify the asserted numbers, not as a version bump.
 FETCH_DATE = "2026-08-20"
 
-# The exact supersession pair confirmed above. 2024-11-01 is the last date the
-# API still returns 1926.95 pre-amendment; the amendment's effective/FR date is
-# Dec 12, 2024.
+# The exact supersession pair confirmed above. Three dates matter and they are
+# NOT the same one:
+#   Dec 12, 2024  — 89 FR 100346 published (the "December 2024 amendment")
+#   Jan 13, 2025  — the effective date: when eCFR's served text actually changes
+#   2024-11-01    — the snapshot saved as the superseded file, below
+# A Federal Register rule is published first and takes effect later, so the FR
+# date is not the cutoff: eCFR still returns the PRE-amendment text of 1926.95(c)
+# on 2024-12-20 (verified by direct fetch). 2024-11-01 is therefore a safe
+# pre-amendment choice, but it is NOT "the last pre-amendment date" — the text
+# changes at the 2025-01-13 record, the only amendment date after 2024-12-20.
 SUPERSEDED_SECTION = "1926.95"
 SUPERSEDED_DATE = "2024-11-01"
 
@@ -106,17 +135,73 @@ def get(url: str, timeout: int = 60, tries: int = 4) -> bytes:
     raise RuntimeError("unreachable")
 
 
-def current_date() -> str:
+def current_date(tries: int = 4) -> str:
     """The title's own 'up to date as of' date — NOT today's date. The API 404s
     if you ask for a date past what it has actually indexed yet.
 
-    Only reached via --latest. The default path uses the pinned FETCH_DATE and
-    makes no call here at all, which is also why the default run works offline
-    against a warm HTTP cache and never depends on what eCFR published today."""
-    import json
-    titles = json.loads(get(f"{API}/titles.json"))["titles"]
+    Reached via --latest, and via the drift check on the default path. The fetch
+    of the corpus itself still uses the pinned FETCH_DATE and never depends on
+    what eCFR published today; --offline skips the drift check entirely."""
+    titles = json.loads(get(f"{API}/titles.json", tries=tries))["titles"]
     t29 = next(t for t in titles if t["number"] == 29)
     return t29["up_to_date_as_of"]
+
+
+def report_drift() -> None:
+    """Print how far the live regulation has moved past the pinned snapshot.
+
+    Advisory only — never fatal, never changes what gets fetched. The pin exists
+    so a red golden case means the retriever broke, not that Congress moved; but
+    a pin nobody ever checks silently ages into a corpus that misstates current
+    federal safety law. This is the cheap way to keep that visible: one small
+    JSON request, and a line telling you whether a --latest diff is worth doing.
+
+    Retries are suppressed (tries=1) — this is a nicety on the way to the real
+    fetch, and it should not add a minute of backoff to a run that is going to
+    succeed regardless."""
+    try:
+        live = current_date(tries=1)
+    except Exception as e:  # noqa: BLE001 — offline is a fine reason to skip
+        print(f"  drift check skipped ({type(e).__name__}) — fetching the pin anyway\n")
+        return
+    if live == FETCH_DATE:
+        print(f"  ✓ eCFR is still up to date as of {FETCH_DATE} — no drift\n")
+        return
+    try:
+        days = (datetime.fromisoformat(live).date()
+                - datetime.fromisoformat(FETCH_DATE).date()).days
+        span = f"{days} days" if days >= 0 else f"{-days} days AHEAD of live"
+    except ValueError:
+        span = "unknown span"
+    print(f"  ⚠ drift: pinned {FETCH_DATE} · eCFR now up to date as of {live} "
+          f"({span}).\n"
+          f"    The corpus you are about to fetch is still the pinned one, which "
+          f"is correct.\n"
+          f"    To evaluate the move:  python fetch_osha.py --latest   then diff "
+          f"the changed\n"
+          f"    subparts against golden/golden.jsonl BEFORE repinning — that is a "
+          f"golden-set\n"
+          f"    revision, not a version bump.\n")
+
+
+def write_snapshot(date: str, how: str, files: int) -> None:
+    """Stamp the corpus with the snapshot it was built from.
+
+    The golden set asserts exact numbers read out of ONE snapshot, and until now
+    that binding lived only in prose across four files. This is the machine-
+    readable half: rag.py reads it back and refuses to ingest or eval a corpus
+    whose date does not match what golden.jsonl says it was verified against."""
+    SNAPSHOT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT_FILE.write_text(json.dumps({
+        "corpus_snapshot": date,
+        "how": how,
+        "title": 29,
+        "part": PART,
+        "files": files,
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "pinned_default": FETCH_DATE,
+    }, indent=2) + "\n", encoding="utf-8")
+    print(f"  ↓ {SNAPSHOT_FILE.name}  (corpus_snapshot={date})")
 
 
 def slug(text: str) -> str:
@@ -210,15 +295,19 @@ def resolve_date(argv: list[str]) -> tuple[str, str]:
 
 if __name__ == "__main__":
     print(f"29 CFR Part {PART} → {DEST}\n")
-    try:
+    date = "(not yet resolved)"      # bound before the try so the 4xx/5xx handler
+    try:                             # can name it even if resolve_date() is what failed
         date, how = resolve_date(sys.argv)
         print(f"snapshot date: {date}   [{how}]\n")
+        if how.startswith("pinned") and "--offline" not in sys.argv:
+            report_drift()
         if how.startswith("live") and date != FETCH_DATE:
             print(f"  ⚠ {date} is NOT the pinned {FETCH_DATE}. The regulation may "
                   f"have moved under\n    the golden set — diff the changed "
                   f"subparts before trusting a green suite.\n")
         xml_bytes = get(f"{API}/full/{date}/title-29.xml?part={PART}")
         n = write_subparts(xml_bytes)
+        write_snapshot(date, how, n)
         print(f"\n{n} subpart files written")
         if "--superseded" in sys.argv:
             print()

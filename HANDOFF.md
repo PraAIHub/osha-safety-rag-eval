@@ -145,7 +145,7 @@ Everything is now in this one repo. Paths are relative to its root.
 ## The 26 golden cases (in golden.jsonl) — frozen 2026-08-25
 
 v1 (gold-001 … gold-010, 2026-08-24) and v2 (gold-011 … gold-026, 2026-08-25).
-Human-readable write-ups for all 26 are in `golden/cases.md`.
+Human-readable write-ups for those 26 are in `golden/cases.md`; the 7 merged 2026-08-28 (gold-027 … gold-033) are not yet written up there.
 
 | id | type | topic |
 |---|---|---|

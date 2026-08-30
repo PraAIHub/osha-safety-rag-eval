@@ -108,7 +108,7 @@ be averaged into one number.
 This is real, measured, and cost nothing — `grade_retrieval()` is set membership on
 `must_cite` / `must_not_cite`, no model in the loop.
 
-**21 of 26 cases carry a retrieval assertion. 15 pass, 6 fail.**
+**21 of 26 cases carry a retrieval assertion. 15 pass, 6 fail.** (Scope: the original 26, per the note above — the 7 cases merged 2026-08-28 are not in this table.)
 
 Before treating any of those as a system failure, each was checked for reachability:
 every `must_cite` target resolves to between 3 and 141 real chunks in the index, so no

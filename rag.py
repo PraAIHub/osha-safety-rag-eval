@@ -502,6 +502,61 @@ def answer(query: str, k: int = 4, hits: list[dict] | None = None) -> str:
 # green is how an eval set quietly becomes a description of current behaviour.
 
 GOLDEN_FILE = ROOT / "golden" / "golden.jsonl"
+SNAPSHOT_FILE = CORPUS / "SNAPSHOT.json"
+
+
+def load_golden() -> tuple[dict, list[dict]]:
+    """(meta, cases). Line 1 of golden.jsonl is a `_meta` record, not a case.
+
+    The meta line carries corpus_snapshot — the eCFR date every fact below was
+    read out of. It lives in the same file as the cases on purpose: a sidecar
+    can get separated from the data it describes, and this binding is the one
+    thing that makes a red case mean "the retriever broke" instead of "maybe the
+    regulation moved."""
+    rows = [json.loads(l) for l in GOLDEN_FILE.read_text().splitlines() if l.strip()]
+    meta = rows[0]["_meta"] if rows and "_meta" in rows[0] else {}
+    return meta, [r for r in rows if "_meta" not in r]
+
+
+def snapshot_guard(allow_mismatch: bool = False) -> None:
+    """Refuse to run when the corpus on disk is not the snapshot the golden set
+    was verified against.
+
+    This is the check the prose in README/CORPUS/SCHEMA has always asserted and
+    no code enforced. The failure it prevents is specifically nasty: a corpus
+    fetched with --latest or --date scores against numbers frozen from a
+    different snapshot, so a case goes red and the reader spends an afternoon on
+    the retriever. Repinning is legitimate — it is just a golden-set revision,
+    and it has to be an explicit one."""
+    meta, _ = load_golden()
+    want = meta.get("corpus_snapshot")
+    if not want:
+        return                       # un-stamped golden set: nothing to check against
+    if not SNAPSHOT_FILE.exists():
+        say(f"  [yellow]! {SNAPSHOT_FILE.name} missing[/yellow] — corpus predates "
+            f"snapshot stamping. Re-run [bold]python fetch_osha.py[/bold] to stamp it.")
+        return
+    got = json.loads(SNAPSHOT_FILE.read_text()).get("corpus_snapshot")
+    if got == want:
+        return
+    if allow_mismatch:
+        say(f"  [yellow]! snapshot mismatch allowed[/yellow] — corpus {got} vs "
+            f"golden set {want}. Scores below are not comparable to report.md.")
+        return
+    say(f"[red]Snapshot mismatch.[/red]  corpus is [bold]{got}[/bold] · "
+        f"golden.jsonl was verified against [bold]{want}[/bold].\n"
+        f"  Every asserted number ('6 feet', '0.1 f/cc') came from {want}, so a "
+        f"failure here would be ambiguous:\n"
+        f"  broken retrieval, or an amended regulation?\n\n"
+        f"  Re-fetch the pinned snapshot:  [bold]python fetch_osha.py --superseded"
+        f"[/bold]  then re-ingest\n"
+        f"  Or, if the move is intended, diff the changed subparts, re-verify the "
+        f"asserted facts, and\n"
+        f"  bump _meta.corpus_snapshot in golden/golden.jsonl — that is a "
+        f"golden-set revision.\n\n"
+        f"  To score anyway (results not comparable to report.md): "
+        f"[bold]--allow-snapshot-mismatch[/bold]")
+    sys.exit(1)
 
 JUDGE = (
     "You are a strict grader for a retrieval-augmented answering system. You are "
@@ -591,7 +646,8 @@ def grade_answer(case: dict, out: str) -> tuple[bool, str]:
 
 
 def cmd_eval(a) -> None:
-    cases = [json.loads(l) for l in GOLDEN_FILE.read_text().splitlines() if l.strip()]
+    snapshot_guard(a.allow_snapshot_mismatch)
+    _meta, cases = load_golden()
     if a.case:
         cases = [c for c in cases if c["id"] in a.case]
     say(f"[bold]Golden set[/bold] · {len(cases)} cases · k={a.k}  "
@@ -662,6 +718,7 @@ def cmd_eval(a) -> None:
 
 def cmd_ingest(a) -> None:
     say(f"[bold]OSHA 1926 RAG · ingest[/bold]  [dim]run {RUN_ID} → {TRACE_FILE}[/dim]")
+    snapshot_guard(a.allow_snapshot_mismatch)
     docs = load(a.formats.split(","), dedupe=not a.no_dedupe)
     chunks = chunk_all(docs, a.chunk_words, a.overlap, a.min_words)
     vecs = embed_all(chunks)
@@ -746,6 +803,9 @@ if __name__ == "__main__":
     i.add_argument("--no-dedupe", action="store_true",
                    help="index both formats of the same title (see what breaks)")
     i.add_argument("--append", action="store_true", help="keep the existing collection")
+    i.add_argument("--allow-snapshot-mismatch", action="store_true",
+                    help="run even if the corpus snapshot differs from the "
+                         "golden set (results not comparable to report.md)")
     i.set_defaults(func=cmd_ingest)
 
     q = sub.add_parser("ask", help="retrieve + answer")
@@ -757,6 +817,9 @@ if __name__ == "__main__":
     g.add_argument("-k", type=int, default=4, help="chunks to retrieve")
     g.add_argument("--case", nargs="*", help="run only these ids, e.g. gold-003")
     g.add_argument("--verbose", action="store_true", help="print each answer")
+    g.add_argument("--allow-snapshot-mismatch", action="store_true",
+                    help="run even if the corpus snapshot differs from the "
+                         "golden set (results not comparable to report.md)")
     g.set_defaults(func=cmd_eval)
 
     n = sub.add_parser("inspect", help="summarize rag_traces.jsonl")
