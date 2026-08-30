@@ -80,6 +80,69 @@ Any golden case built on this trap should assert
 present-tense question ("does PPE have to fit properly today"), and the
 opposite if you ever write a case that deliberately asks about the old rule.
 
+### Why this section, and why only this one
+
+1926.95 is **one candidate among dozens**, not the only supersession in Part
+1926. Measured live against `GET /versions/title-29.json?part=1926`: 682 version
+records across 347 identifiers, of which **172 have 2+ version records and 51
+have 2+ distinct amendment dates**, spread over 27 distinct amendment dates for
+the part. Any of those 51 could carry a supersession trap.
+
+One was implemented because the golden set needs one *good* pair, not many. A
+usable trap needs the amendment to change the answer to a question a person
+would actually ask, in prose clean enough to grade. Most of the heavily-amended
+sections fail that bar — the top five by amendment count are chemical exposure
+standards (1926.55 gases/vapors, 9 dates; 1926.1124 cadmium, 8; 1926.1127, 7;
+1926.62 lead, 6; 1926.1101 asbestos, 6) whose deltas are numeric table cells and
+appendix revisions. "Did a PEL table change in a 2019 appendix revision?" is a
+poor golden case: the diff is buried in a table, awkward to phrase naturally,
+and awkward to grade.
+
+1926.95(c) is the better fixture on every axis — "does PPE have to fit?" is a
+question a site supervisor actually asks, the text is plain prose rather than a
+table, the two answers are unambiguous and opposite, and it traces to a single
+Federal Register citation. Three golden cases (gold-019/020/021) exercise it. A
+second section would add fetch cost and corpus size without testing a new
+failure mode: the mechanism under test is that **similarity cannot separate two
+versions of the same section number**, and one clean pair demonstrates that as
+completely as ten would.
+
+**To add another trap**, pick an identifier from the 51 with a prose-level
+change, add it alongside `SUPERSEDED_SECTION`/`SUPERSEDED_DATE` in
+`fetch_osha.py`, and write the cases. Nothing in `rag.py` needs to change — the
+superseded file is just another `.md` in the same folder, chunked and retrieved
+identically to every other document. Confirm the pre-amendment date by fetching
+it and reading the text, not by trusting the Federal Register publication date
+(see the caution below).
+
+### Caution: the FR publication date is not the cutoff
+
+89 FR 100346 was **published** Dec 12, 2024, and that date appears in the
+versions endpoint — but eCFR still serves the **pre-amendment** text of
+1926.95(c) on **2024-12-20**, verified by direct fetch. The new "properly fits"
+language is not in the corpus on that date. A Federal Register rule is published
+first and takes effect later; the versions endpoint records a further amendment
+at **2025-01-13**, which is when the text actually changes.
+
+Three distinct dates, easy to conflate:
+
+| Date | What it is |
+|---|---|
+| **2024-12-12** | 89 FR 100346 published — the "December 2024 amendment" |
+| **2025-01-13** | Effective date — when eCFR's served text actually changes |
+| **2024-11-01** | The snapshot saved as the superseded file |
+
+This does **not** contradict gold-020's frozen assertion that the fit
+requirement "was added by the December 2024 amendment." That is correct: the
+December 2024 rulemaking added it, and it took effect in January 2025. The
+rulemaking date and the text-change date are different facts.
+
+What it does mean: `SUPERSEDED_DATE = "2024-11-01"` is a safe choice —
+comfortably pre-amendment — but it is not "the last pre-amendment date," and
+anyone fetching 2024-12-20 expecting the new text will get the old one. When
+adding a trap, always confirm the boundary by fetching both sides and diffing
+the text rather than trusting the FR date.
+
 ## Reproducibility
 
 eCFR publishes point-in-time snapshots, not diffs, so "fetch the current text"

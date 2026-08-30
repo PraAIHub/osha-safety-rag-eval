@@ -4,8 +4,11 @@ machine-readable source of truth `rag.py eval` actually reads. Each case
 below is annotated with the `gold-NNN` id and official `type` it maps to; keep both
 in sync by hand if either changes.**
 
-**26 cases, frozen.** Two batches, written in two sessions, neither one written
-after seeing an LLM-judged score — the freeze rule is intact.
+**This file documents 26 of the golden set's 33 cases.** Two batches, written in
+two sessions, neither one written after seeing an LLM-judged score — the freeze
+rule is intact. The remaining 7 (gold-027 … gold-033) were merged 2026-08-28 and
+are exercised in `report.md`, but have no per-case write-up here yet; the
+machine-readable set in `golden/golden.jsonl` is the source of truth for all 33.
 
 - **v1 — gold-001 … gold-010** (2026-08-24). Originally drafted as 6 "common" / 2
   "adversarial" / 2 "edge" against a placeholder schema, before the Track A project brief was

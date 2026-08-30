@@ -39,7 +39,11 @@ Source: eCFR's public versioner API — no key, no auth, stdlib only.
     https://www.ecfr.gov/api/versioner/v1/versions/title-29.json?part=1926    — amendment history
 All three were hit live while building this script (2026-08-24): Title 29 was
 "up to date as of" 2026-08-20, Part 1926 held 29 subparts / ~304 sections + 40
-appendices, and 133 of those sections have 2+ recorded amendment dates.
+appendices. Re-measured against the versions endpoint on 2026-08-29: 682 version
+records over 347 identifiers, of which 172 have 2+ version records and 51 have
+2+ DISTINCT amendment dates, across 27 distinct amendment dates for the part.
+(An earlier revision of this docstring claimed 133; that figure matches neither
+count and was not reproducible — quote the method with the number.)
 
 Each SUBPART becomes one Markdown file — 29 files, inside the brief's "30-40
 documents" range without any extra splitting. Every SECTION and APPENDIX inside
@@ -89,9 +93,16 @@ PART = "1926"
 # revision and re-verify the asserted numbers, not as a version bump.
 FETCH_DATE = "2026-08-20"
 
-# The exact supersession pair confirmed above. 2024-11-01 is the last date the
-# API still returns 1926.95 pre-amendment; the amendment's effective/FR date is
-# Dec 12, 2024.
+# The exact supersession pair confirmed above. Three dates matter and they are
+# NOT the same one:
+#   Dec 12, 2024  — 89 FR 100346 published (the "December 2024 amendment")
+#   Jan 13, 2025  — the effective date: when eCFR's served text actually changes
+#   2024-11-01    — the snapshot saved as the superseded file, below
+# A Federal Register rule is published first and takes effect later, so the FR
+# date is not the cutoff: eCFR still returns the PRE-amendment text of 1926.95(c)
+# on 2024-12-20 (verified by direct fetch). 2024-11-01 is therefore a safe
+# pre-amendment choice, but it is NOT "the last pre-amendment date" — the text
+# changes at the 2025-01-13 record, the only amendment date after 2024-12-20.
 SUPERSEDED_SECTION = "1926.95"
 SUPERSEDED_DATE = "2024-11-01"
 

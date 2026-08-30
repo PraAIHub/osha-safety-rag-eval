@@ -38,8 +38,8 @@ for what each means — not repeated here to avoid the two copies drifting.
   recording `corpus_snapshot: 2026-08-20`, the eCFR date every asserted fact was
   read out of; `rag.py` refuses to ingest or eval a corpus that disagrees with it.
   **`cases.md` documents provenance for gold-001 … gold-026 only** — gold-027 …
-  gold-033 are exercised in `report.md` but have no per-case verification entry
-  there yet. The 26-case freeze below describes that documented subset:
+  gold-033 were merged 2026-08-28 and are exercised in `report.md`, but have no
+  per-case verification entry there yet. The 26-case freeze below describes that documented subset:
 - ✅ **the documented subset is frozen at 26 cases** (2026-08-25) — clears the brief's
   ≥25 floor. Mix: 9 `exact_string`, 5 `multi_hop`, 3 `superseded`, 4
   `unanswerable` (21 accuracy-class) + 3 `adversarial`, 2 `abuse` (5
