@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 console = Console()
@@ -66,6 +67,25 @@ def set_quiet(value: bool) -> None:
 def say(*args, **kwargs) -> None:
     if not _quiet:
         console.print(*args, **kwargs)
+
+
+def esc(text) -> str:
+    """Escape rich markup in text this module did not write.
+
+    `say` is console.print, and rich reads [...] as style markup. Anything
+    interpolated into a say() f-string that came from the corpus, a golden case,
+    or a model is therefore parsed as markup and SILENTLY DROPPED — no error, no
+    placeholder, just gone.
+
+    That is not cosmetic here. Answers carry [1][2] citation markers, and
+    gold-025/030/032 carry injected directives inside brackets: printing them raw
+    hides the citations this system exists to produce and makes an injection case
+    read as benign in the transcript. Traces were never affected — _write()
+    serialises the raw string — so the bug only ever misled a human.
+
+    Rule: literal styling tags belong in the f-string; every interpolated value
+    from outside this file goes through esc()."""
+    return escape(str(text))
 
 
 # ── the trace half ───────────────────────────────────────────────────────────

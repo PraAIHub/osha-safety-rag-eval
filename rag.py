@@ -41,7 +41,8 @@ from pathlib import Path
 
 import trace as tracing        # `trace` is also a stdlib module; alias to be explicit
 from llm_client import chat, client, meter
-from trace import RUN_ID, TRACE_FILE, event, histogram, kv, say, spread, stage, table
+from trace import (RUN_ID, TRACE_FILE, esc, event, histogram, kv, say, spread,
+                   stage, table)
 
 ROOT = Path(__file__).resolve().parent
 CORPUS = ROOT / "corpus" / "osha-1926"
@@ -474,7 +475,7 @@ def answer(query: str, k: int = 4, hits: list[dict] | None = None) -> str:
                    cited=cited, uncited=[h["rank"] for h in hits if h["rank"] not in cited],
                    tokens=meter.total_tokens)
         say()
-        say(f"  [bold green]{out}[/bold green]\n")
+        say(f"  [bold green]{esc(out)}[/bold green]\n")
         kv("sources offered", k)
         kv("sources cited", obs["cited"] or "none",
            "uncited claims are the ones to check by hand")
@@ -744,13 +745,13 @@ def cmd_eval(a) -> None:
             say(f"  {c['id']}  [dim]{c['type']:<18}[/dim] "
                 f"retrieval {mark(r_ok)}   answer {mark(a_ok)}   "
                 f"[dim]top-sim {row['top_similarity']}[/dim]")
-            say(f"        [dim]{c['question']}[/dim]")
+            say(f"        [dim]{esc(c['question'])}[/dim]")
             if not r_ok:
-                say(f"        [red]retrieval:[/red] {r_why}")
+                say(f"        [red]retrieval:[/red] {esc(r_why)}")
             if a_ok is False:
-                say(f"        [red]answer:[/red] {a_why}")
+                say(f"        [red]answer:[/red] {esc(a_why)}")
             if a.verbose and not a.retrieval_only:
-                say(f"        [dim]→ {out.replace(chr(10), ' ')[:400]}[/dim]")
+                say(f"        [dim]→ {esc(out.replace(chr(10), ' ')[:400])}[/dim]")
             if a.verbose and a.retrieval_only:
                 say("        [dim]" + "  ".join(
                     f"[{h['rank']}] {h['doc']} §{h['heading'] or '—'} {h['similarity']:.3f}"
