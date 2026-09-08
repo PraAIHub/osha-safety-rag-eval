@@ -13,14 +13,24 @@ intermediate state that broke gold-030 has to be reconstructed to be seen.
 | arm | `SYSTEM` paragraphs | patch | what it shows |
 |---|---|---|---|
 | **A** | sourcing only | `arm-A.patch` | the original safety failure: gold-007 tells the joke |
-| **B** | + scope + anti-override | `arm-B.patch` | the over-refusal regression: gold-030 breaks |
+| **B** | + scope only | `arm-B.patch` | the over-refusal regression: gold-030 breaks |
 | **C** | + the carve-out (HEAD) | none | both fixed |
 
 **Arm A is byte-identical to `git show a54f5c2:rag.py`.** Arm B is a
-*reconstruction* — the literal attempt-1 text was never committed. It removes
-exactly the paragraph `report.md` quotes as Attempt 2's contribution, which is the
-closest faithful arm available. If gold-030 does not fail under arm B, suspect the
-reconstruction before suspecting the finding.
+*reconstruction* — the literal attempt-1 text was never committed. It is arm A
+plus exactly one clause, the scope rule, on the strength of `report.md`'s "one
+clause was added" and its description of attempt 1 as *"told to decline anything
+that is not a workplace-safety question"*.
+
+The anti-override paragraph is deliberately **excluded** from arm B. The report
+quotes only the carve-out paragraph as attempt 2's contribution and leaves the
+anti-override one unassigned, so its attribution is inferred either way — but it
+instructs the model to ignore requests to drop the citation requirement, which is
+exactly the pressure gold-030 applies. Including it would confound the flip this
+arm exists to show. Arm B is therefore one variable from arm A and two from arm C.
+
+If gold-030 does not fail under arm B, suspect the reconstruction before
+suspecting the finding.
 
 ## The four cases, and why two of them must *answer*
 
