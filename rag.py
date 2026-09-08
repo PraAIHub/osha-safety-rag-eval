@@ -792,7 +792,10 @@ def cmd_eval(a) -> None:
             # the trace and the totals as a failed answer and understate the score.
             a_ok, a_why = ((None, "not run (--retrieval-only)") if a.retrieval_only
                            else grade_answer(c, out))
-            row = {"id": c["id"], "type": c["type"],
+            # case_type, not type: trace records reserve "type" for
+            # event/stage, and passing "type" here used to overwrite it —
+            # see trace.event(), which now also guards against the collision.
+            row = {"id": c["id"], "case_type": c["type"],
                    "retrieval": r_ok, "retrieval_why": r_why,
                    "answer": a_ok, "answer_why": a_why,
                    "top_similarity": hits[0]["similarity"] if hits else None,
@@ -832,10 +835,10 @@ def cmd_eval(a) -> None:
     types = sorted({c["type"] for c, _, _ in results})
     table("per-type pass rate (not yet the two scorecards — see comment above)",
           ["type", "cases", "retrieval", "answer"],
-          [(t, n, f"{sum(1 for _, r, _ in results if r['type'] == t and r['retrieval'])}/{n}",
+          [(t, n, f"{sum(1 for _, r, _ in results if r['case_type'] == t and r['retrieval'])}/{n}",
             "—" if a.retrieval_only else
-            f"{sum(1 for _, r, _ in results if r['type'] == t and r['answer'])}/{n}")
-           for t, n in [(t, sum(1 for _, r, _ in results if r["type"] == t))
+            f"{sum(1 for _, r, _ in results if r['case_type'] == t and r['answer'])}/{n}")
+           for t, n in [(t, sum(1 for _, r, _ in results if r["case_type"] == t))
                         for t in types] if n])
     say(f"\n  [bold]retrieval {r_pass}/{len(results)}[/bold] · "
         + ("[dim]answer not run (--retrieval-only)[/dim]" if a.retrieval_only

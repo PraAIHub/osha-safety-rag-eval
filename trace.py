@@ -120,9 +120,21 @@ def _write(record: dict) -> None:
         pass
 
 
+_RESERVED = ("ts", "run", "type", "kind")
+
+
 def event(kind: str, **fields) -> None:
-    """One per-item record: a file loaded, a batch embedded, an LLM call made."""
-    _write({"type": "event", "kind": kind, **fields})
+    """One per-item record: a file loaded, a batch embedded, an LLM call made.
+
+    Reserved keys win, and a caller's colliding value is kept under a suffixed
+    name rather than dropped. This is not hypothetical: cmd_eval passed the
+    golden case's `type` ("exact_string", "adversarial", …), which silently
+    overwrote {"type": "event"} — 77 of 397 records in a real trace file were
+    therefore invisible to any `.type == "event"` filter, including the jq the
+    2026-08-29 diagnostic was written against. A trace you cannot filter is
+    worse than one you cannot read, because it fails quietly."""
+    clash = {f"{k}_": fields.pop(k) for k in _RESERVED if k in fields}
+    _write({"type": "event", "kind": kind, **fields, **clash})
 
 
 @contextmanager
