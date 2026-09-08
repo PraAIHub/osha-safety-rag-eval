@@ -719,11 +719,18 @@ def cmd_eval(a) -> None:
             tracing.set_quiet(True)          # trace everything, print nothing
             try:
                 hits = retrieve(c["question"], k=a.k)
-                out = answer(c["question"], k=a.k, hits=hits)
+                # --retrieval-only stops here. grade_retrieval() below is pure set
+                # membership — no model, no key, no network — so the reproducible
+                # half of the eval has no business requiring an API. Skipping the
+                # answer keeps chunking / k / must_cite work runnable offline.
+                out = "" if a.retrieval_only else answer(c["question"], k=a.k, hits=hits)
             finally:
                 tracing.set_quiet(False)
             r_ok, r_why = grade_retrieval(c, hits)
-            a_ok, a_why = grade_answer(c, out)
+            # None, not False: the answer was NOT RUN. A False here would land in
+            # the trace and the totals as a failed answer and understate the score.
+            a_ok, a_why = ((None, "not run (--retrieval-only)") if a.retrieval_only
+                           else grade_answer(c, out))
             row = {"id": c["id"], "type": c["type"],
                    "retrieval": r_ok, "retrieval_why": r_why,
                    "answer": a_ok, "answer_why": a_why,
@@ -732,21 +739,28 @@ def cmd_eval(a) -> None:
             results.append((c, row, out))
             event("golden_case", **row)
 
-            mark = lambda ok: "[green]PASS[/green]" if ok else "[red]FAIL[/red]"  # noqa: E731
+            mark = lambda ok: ("[dim]—[/dim]" if ok is None else   # noqa: E731
+                               "[green]PASS[/green]" if ok else "[red]FAIL[/red]")
             say(f"  {c['id']}  [dim]{c['type']:<18}[/dim] "
                 f"retrieval {mark(r_ok)}   answer {mark(a_ok)}   "
                 f"[dim]top-sim {row['top_similarity']}[/dim]")
             say(f"        [dim]{c['question']}[/dim]")
             if not r_ok:
                 say(f"        [red]retrieval:[/red] {r_why}")
-            if not a_ok:
+            if a_ok is False:
                 say(f"        [red]answer:[/red] {a_why}")
-            if a.verbose:
+            if a.verbose and not a.retrieval_only:
                 say(f"        [dim]→ {out.replace(chr(10), ' ')[:400]}[/dim]")
+            if a.verbose and a.retrieval_only:
+                say("        [dim]" + "  ".join(
+                    f"[{h['rank']}] {h['doc']} §{h['heading'] or '—'} {h['similarity']:.3f}"
+                    for h in hits) + "[/dim]")
 
         r_pass = sum(1 for _, r, _ in results if r["retrieval"])
         a_pass = sum(1 for _, r, _ in results if r["answer"])
-        obs.update(retrieval_passed=r_pass, answer_passed=a_pass, n=len(results))
+        obs.update(retrieval_passed=r_pass, n=len(results),
+                   answer_passed=None if a.retrieval_only else a_pass,
+                   retrieval_only=a.retrieval_only)
 
     say()
     # Per-type pass rate — a starting point, NOT the deliverable. The actual job
@@ -758,11 +772,13 @@ def cmd_eval(a) -> None:
     table("per-type pass rate (not yet the two scorecards — see comment above)",
           ["type", "cases", "retrieval", "answer"],
           [(t, n, f"{sum(1 for _, r, _ in results if r['type'] == t and r['retrieval'])}/{n}",
+            "—" if a.retrieval_only else
             f"{sum(1 for _, r, _ in results if r['type'] == t and r['answer'])}/{n}")
            for t, n in [(t, sum(1 for _, r, _ in results if r["type"] == t))
                         for t in types] if n])
     say(f"\n  [bold]retrieval {r_pass}/{len(results)}[/bold] · "
-        f"[bold]answer {a_pass}/{len(results)}[/bold]")
+        + ("[dim]answer not run (--retrieval-only)[/dim]" if a.retrieval_only
+           else f"[bold]answer {a_pass}/{len(results)}[/bold]"))
     say("  [dim]A retrieval FAIL and an answer FAIL are different bugs with "
         "different fixes — that is why they do not add up to one number.[/dim]")
     say(f"  [dim]Every case is traced to {TRACE_FILE}; rerun after any change "
@@ -877,6 +893,9 @@ if __name__ == "__main__":
     g.add_argument("-k", type=int, default=4, help="chunks to retrieve")
     g.add_argument("--case", nargs="*", help="run only these ids, e.g. gold-003")
     g.add_argument("--verbose", action="store_true", help="print each answer")
+    g.add_argument("--retrieval-only", action="store_true",
+                   help="grade retrieval only — no model call, no API key needed. "
+                        "The deterministic half, runnable offline.")
     g.add_argument("--allow-snapshot-mismatch", action="store_true",
                     help="run even if the corpus snapshot differs from the "
                          "golden set (results not comparable to report.md)")
