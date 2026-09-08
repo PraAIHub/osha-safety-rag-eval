@@ -33,16 +33,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
 import time
 from pathlib import Path
 
+# qualified: fingerprint() needs load_env / model_name / DEFAULT_BASE_URL
+import llm_client
 import trace as tracing        # `trace` is also a stdlib module; alias to be explicit
 from llm_client import chat, client, meter
-from trace import (RUN_ID, TRACE_FILE, esc, event, histogram, kv, say, spread,
-                   stage, table)
+from trace import (RUN_ID, TRACE_FILE, esc, event, histogram, kv, say, sha12,
+                   spread, stage, table)
 
 ROOT = Path(__file__).resolve().parent
 CORPUS = ROOT / "corpus" / "osha-1926"
@@ -619,6 +622,55 @@ def snapshot_guard(allow_mismatch: bool = False) -> None:
         f"[bold]--allow-snapshot-mismatch[/bold]")
     sys.exit(1)
 
+
+def fingerprint() -> dict:
+    """What produced this run — the thing rag_traces.jsonl could not answer.
+
+    Retrieval reproduces exactly (the corpus is pinned and digest-guarded), but
+    an answer score cannot be attributed to anything: which SYSTEM prompt ran,
+    which model actually answered, which golden set graded it. Concretely, two
+    failures this fixes:
+
+      · SYSTEM's variant was only recoverable by accident, because
+        llm_client._PREVIEW=300 happens to be just long enough that the
+        clipped system message in an llm_call trace reveals whether the
+        second paragraph is present.
+      · model is logged as "mai" because OPENAI_BASE_URL points at a proxy
+        that picks the model and ignores the requested id — the model name
+        alone tells you nothing about what actually answered.
+
+    Every field here must be cheap and must never raise — a fingerprint that
+    can crash the run it is trying to identify defeats its own purpose, so
+    each lookup is wrapped and degrades to None rather than propagating."""
+    def _safe(fn):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 — see docstring
+            return None
+
+    snap = _safe(lambda: json.loads(SNAPSHOT_FILE.read_text())
+                 if SNAPSHOT_FILE.exists() else {}) or {}
+    # Resolve .env FIRST, and without building a client — client() demands a key
+    # and this must work key-less (eval --retrieval-only, ingest). Reading
+    # os.environ before load_env() reports the fallback defaults rather than what
+    # .env actually sets, so a run whose .env names a real model and endpoint
+    # would be stamped "mai" at the class proxy. A fingerprint that misattributes
+    # a run is worse than none, which is the whole reason this function exists.
+    _safe(llm_client.load_env)
+    return {
+        "system_sha256": _safe(lambda: sha12(SYSTEM)),
+        "model": _safe(llm_client.model_name),
+        "base_url": _safe(lambda: os.environ.get("OPENAI_BASE_URL", "").strip()
+                           or llm_client.DEFAULT_BASE_URL),
+        "embed_model": EMBED_MODEL,
+        "corpus_snapshot": snap.get("corpus_snapshot"),
+        "corpus_sha256": snap.get("corpus_sha256"),
+        "golden_sha256": _safe(lambda: sha12(GOLDEN_FILE.read_text(encoding="utf-8"))),
+        # chunk_target_words is NOT knowable at eval time from args — omitted
+        # rather than guessed. It belongs on ingest's fingerprint, not eval's.
+    }
+
+
 JUDGE = (
     "You are a strict grader for a retrieval-augmented answering system. You are "
     "given a CASE (question, expected behavior, required facts, things the answer "
@@ -714,8 +766,16 @@ def cmd_eval(a) -> None:
     say(f"[bold]Golden set[/bold] · {len(cases)} cases · k={a.k}  "
         f"[dim]run {RUN_ID}[/dim]\n")
 
+    # Stamp WHAT PRODUCED this run before scoring anything — retrieval numbers
+    # reproduce exactly (corpus pinned + digest-guarded) but an answer score is
+    # unattributable without knowing the SYSTEM variant and model that ran.
+    fp = fingerprint()
+    for label, value in fp.items():
+        kv(label, value if value is not None else "—")
+    say()
+
     results = []
-    with stage("eval", cases=len(cases), k=a.k) as obs:
+    with stage("eval", cases=len(cases), k=a.k, **fp) as obs:
         for c in cases:
             tracing.set_quiet(True)          # trace everything, print nothing
             try:
@@ -796,6 +856,14 @@ def cmd_eval(a) -> None:
 def cmd_ingest(a) -> None:
     say(f"[bold]OSHA 1926 RAG · ingest[/bold]  [dim]run {RUN_ID} → {TRACE_FILE}[/dim]")
     snapshot_guard(a.allow_snapshot_mismatch)
+    # ingest has no single outermost stage — load/chunk/embed/store each write
+    # their own — so the fingerprint is emitted once here rather than folded
+    # into one of them (see cmd_eval, which DOES have one outer stage("eval")
+    # and gets the fingerprint merged into that record instead).
+    fp = fingerprint()
+    for label, value in fp.items():
+        kv(label, value if value is not None else "—")
+    event("fingerprint", **fp)
     docs = load(a.formats.split(","), dedupe=not a.no_dedupe)
     chunks = chunk_all(docs, a.chunk_words, a.overlap, a.min_words)
     vecs = embed_all(chunks)

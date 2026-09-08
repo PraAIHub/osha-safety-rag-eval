@@ -32,6 +32,7 @@ timeline covering both the pipeline stages and the model calls inside them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import statistics
@@ -86,6 +87,20 @@ def esc(text) -> str:
     Rule: literal styling tags belong in the f-string; every interpolated value
     from outside this file goes through esc()."""
     return escape(str(text))
+
+
+# ── run fingerprint support ──────────────────────────────────────────────────
+
+def sha12(text: str) -> str:
+    """First 12 hex chars of sha256(text) — enough to tell two versions of a
+    prompt, a golden set, or a corpus apart without dragging a full 64-char
+    digest through every printed line and trace record. Never raises: a
+    fingerprint helper that can crash the run it is trying to identify is
+    worse than an absent fingerprint."""
+    try:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 — observability must not take down the run
+        return ""
 
 
 # ── the trace half ───────────────────────────────────────────────────────────
