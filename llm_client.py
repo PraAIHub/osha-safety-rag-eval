@@ -60,8 +60,8 @@ def model_name() -> str:
     return (os.environ.get("OPENAI_MODEL", "") or DEFAULT_MODEL).strip()
 
 
-def client() -> OpenAI:
-    """Load .env and return a client. Fails with the fix, not a stack trace.
+def load_env() -> None:
+    """Load .env into os.environ. Safe to call more than once.
 
     `.env` wins over an inherited shell variable, deliberately. python-dotenv
     defaults the other way, and that default costs an hour the first time it
@@ -71,7 +71,14 @@ def client() -> OpenAI:
     sends you debugging the key you can see in .env instead of the one that was
     actually sent. This repo's documented configuration surface is .env, so
     .env is what takes effect. A shadowed value is announced, not swallowed,
-    so a deliberate shell override is still visible."""
+    so a deliberate shell override is still visible.
+
+    Split out of client() so anything needing the RESOLVED configuration —
+    rag.fingerprint(), which must work with no key at all — reads the same
+    values the API calls will actually use. Reading os.environ before this has
+    run reports the fallback defaults instead of what .env says, which for a
+    fingerprint means quietly attributing a run to the wrong model and the
+    wrong endpoint."""
     before = {k: os.environ.get(k) for k in
               ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL")}
     load_dotenv(override=True)
@@ -80,6 +87,10 @@ def client() -> OpenAI:
         if was and now and was != now:
             say(f"[dim](.env overrode {name} from your shell environment)[/dim]")
 
+
+def client() -> OpenAI:
+    """Load .env and return a client. Fails with the fix, not a stack trace."""
+    load_env()
     key = (os.environ.get("OPENAI_API_KEY", "")
            or os.environ.get("MAI_API_KEY", "")).strip()
     if not key or key.startswith("paste-your"):

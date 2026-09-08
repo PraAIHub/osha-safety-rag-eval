@@ -32,6 +32,7 @@ timeline covering both the pipeline stages and the model calls inside them.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import statistics
@@ -42,6 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 console = Console()
@@ -68,6 +70,39 @@ def say(*args, **kwargs) -> None:
         console.print(*args, **kwargs)
 
 
+def esc(text) -> str:
+    """Escape rich markup in text this module did not write.
+
+    `say` is console.print, and rich reads [...] as style markup. Anything
+    interpolated into a say() f-string that came from the corpus, a golden case,
+    or a model is therefore parsed as markup and SILENTLY DROPPED — no error, no
+    placeholder, just gone.
+
+    That is not cosmetic here. Answers carry [1][2] citation markers, and
+    gold-025/030/032 carry injected directives inside brackets: printing them raw
+    hides the citations this system exists to produce and makes an injection case
+    read as benign in the transcript. Traces were never affected — _write()
+    serialises the raw string — so the bug only ever misled a human.
+
+    Rule: literal styling tags belong in the f-string; every interpolated value
+    from outside this file goes through esc()."""
+    return escape(str(text))
+
+
+# ── run fingerprint support ──────────────────────────────────────────────────
+
+def sha12(text: str) -> str:
+    """First 12 hex chars of sha256(text) — enough to tell two versions of a
+    prompt, a golden set, or a corpus apart without dragging a full 64-char
+    digest through every printed line and trace record. Never raises: a
+    fingerprint helper that can crash the run it is trying to identify is
+    worse than an absent fingerprint."""
+    try:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    except Exception:  # noqa: BLE001 — observability must not take down the run
+        return ""
+
+
 # ── the trace half ───────────────────────────────────────────────────────────
 
 def _write(record: dict) -> None:
@@ -85,9 +120,21 @@ def _write(record: dict) -> None:
         pass
 
 
+_RESERVED = ("ts", "run", "type", "kind")
+
+
 def event(kind: str, **fields) -> None:
-    """One per-item record: a file loaded, a batch embedded, an LLM call made."""
-    _write({"type": "event", "kind": kind, **fields})
+    """One per-item record: a file loaded, a batch embedded, an LLM call made.
+
+    Reserved keys win, and a caller's colliding value is kept under a suffixed
+    name rather than dropped. This is not hypothetical: cmd_eval passed the
+    golden case's `type` ("exact_string", "adversarial", …), which silently
+    overwrote {"type": "event"} — 77 of 397 records in a real trace file were
+    therefore invisible to any `.type == "event"` filter, including the jq the
+    2026-08-29 diagnostic was written against. A trace you cannot filter is
+    worse than one you cannot read, because it fails quietly."""
+    clash = {f"{k}_": fields.pop(k) for k in _RESERVED if k in fields}
+    _write({"type": "event", "kind": kind, **fields, **clash})
 
 
 @contextmanager

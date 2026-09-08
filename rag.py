@@ -33,15 +33,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import statistics
 import sys
 import time
 from pathlib import Path
 
+# qualified: fingerprint() needs load_env / model_name / DEFAULT_BASE_URL
+import llm_client
 import trace as tracing        # `trace` is also a stdlib module; alias to be explicit
 from llm_client import chat, client, meter
-from trace import RUN_ID, TRACE_FILE, event, histogram, kv, say, spread, stage, table
+from trace import (RUN_ID, TRACE_FILE, esc, event, histogram, kv, say, sha12,
+                   spread, stage, table)
 
 ROOT = Path(__file__).resolve().parent
 CORPUS = ROOT / "corpus" / "osha-1926"
@@ -474,7 +478,7 @@ def answer(query: str, k: int = 4, hits: list[dict] | None = None) -> str:
                    cited=cited, uncited=[h["rank"] for h in hits if h["rank"] not in cited],
                    tokens=meter.total_tokens)
         say()
-        say(f"  [bold green]{out}[/bold green]\n")
+        say(f"  [bold green]{esc(out)}[/bold green]\n")
         kv("sources offered", k)
         kv("sources cited", obs["cited"] or "none",
            "uncited claims are the ones to check by hand")
@@ -618,6 +622,55 @@ def snapshot_guard(allow_mismatch: bool = False) -> None:
         f"[bold]--allow-snapshot-mismatch[/bold]")
     sys.exit(1)
 
+
+def fingerprint() -> dict:
+    """What produced this run — the thing rag_traces.jsonl could not answer.
+
+    Retrieval reproduces exactly (the corpus is pinned and digest-guarded), but
+    an answer score cannot be attributed to anything: which SYSTEM prompt ran,
+    which model actually answered, which golden set graded it. Concretely, two
+    failures this fixes:
+
+      · SYSTEM's variant was only recoverable by accident, because
+        llm_client._PREVIEW=300 happens to be just long enough that the
+        clipped system message in an llm_call trace reveals whether the
+        second paragraph is present.
+      · model is logged as "mai" because OPENAI_BASE_URL points at a proxy
+        that picks the model and ignores the requested id — the model name
+        alone tells you nothing about what actually answered.
+
+    Every field here must be cheap and must never raise — a fingerprint that
+    can crash the run it is trying to identify defeats its own purpose, so
+    each lookup is wrapped and degrades to None rather than propagating."""
+    def _safe(fn):
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 — see docstring
+            return None
+
+    snap = _safe(lambda: json.loads(SNAPSHOT_FILE.read_text())
+                 if SNAPSHOT_FILE.exists() else {}) or {}
+    # Resolve .env FIRST, and without building a client — client() demands a key
+    # and this must work key-less (eval --retrieval-only, ingest). Reading
+    # os.environ before load_env() reports the fallback defaults rather than what
+    # .env actually sets, so a run whose .env names a real model and endpoint
+    # would be stamped "mai" at the class proxy. A fingerprint that misattributes
+    # a run is worse than none, which is the whole reason this function exists.
+    _safe(llm_client.load_env)
+    return {
+        "system_sha256": _safe(lambda: sha12(SYSTEM)),
+        "model": _safe(llm_client.model_name),
+        "base_url": _safe(lambda: os.environ.get("OPENAI_BASE_URL", "").strip()
+                           or llm_client.DEFAULT_BASE_URL),
+        "embed_model": EMBED_MODEL,
+        "corpus_snapshot": snap.get("corpus_snapshot"),
+        "corpus_sha256": snap.get("corpus_sha256"),
+        "golden_sha256": _safe(lambda: sha12(GOLDEN_FILE.read_text(encoding="utf-8"))),
+        # chunk_target_words is NOT knowable at eval time from args — omitted
+        # rather than guessed. It belongs on ingest's fingerprint, not eval's.
+    }
+
+
 JUDGE = (
     "You are a strict grader for a retrieval-augmented answering system. You are "
     "given a CASE (question, expected behavior, required facts, things the answer "
@@ -713,18 +766,36 @@ def cmd_eval(a) -> None:
     say(f"[bold]Golden set[/bold] · {len(cases)} cases · k={a.k}  "
         f"[dim]run {RUN_ID}[/dim]\n")
 
+    # Stamp WHAT PRODUCED this run before scoring anything — retrieval numbers
+    # reproduce exactly (corpus pinned + digest-guarded) but an answer score is
+    # unattributable without knowing the SYSTEM variant and model that ran.
+    fp = fingerprint()
+    for label, value in fp.items():
+        kv(label, value if value is not None else "—")
+    say()
+
     results = []
-    with stage("eval", cases=len(cases), k=a.k) as obs:
+    with stage("eval", cases=len(cases), k=a.k, **fp) as obs:
         for c in cases:
             tracing.set_quiet(True)          # trace everything, print nothing
             try:
                 hits = retrieve(c["question"], k=a.k)
-                out = answer(c["question"], k=a.k, hits=hits)
+                # --retrieval-only stops here. grade_retrieval() below is pure set
+                # membership — no model, no key, no network — so the reproducible
+                # half of the eval has no business requiring an API. Skipping the
+                # answer keeps chunking / k / must_cite work runnable offline.
+                out = "" if a.retrieval_only else answer(c["question"], k=a.k, hits=hits)
             finally:
                 tracing.set_quiet(False)
             r_ok, r_why = grade_retrieval(c, hits)
-            a_ok, a_why = grade_answer(c, out)
-            row = {"id": c["id"], "type": c["type"],
+            # None, not False: the answer was NOT RUN. A False here would land in
+            # the trace and the totals as a failed answer and understate the score.
+            a_ok, a_why = ((None, "not run (--retrieval-only)") if a.retrieval_only
+                           else grade_answer(c, out))
+            # case_type, not type: trace records reserve "type" for
+            # event/stage, and passing "type" here used to overwrite it —
+            # see trace.event(), which now also guards against the collision.
+            row = {"id": c["id"], "case_type": c["type"],
                    "retrieval": r_ok, "retrieval_why": r_why,
                    "answer": a_ok, "answer_why": a_why,
                    "top_similarity": hits[0]["similarity"] if hits else None,
@@ -732,21 +803,28 @@ def cmd_eval(a) -> None:
             results.append((c, row, out))
             event("golden_case", **row)
 
-            mark = lambda ok: "[green]PASS[/green]" if ok else "[red]FAIL[/red]"  # noqa: E731
+            mark = lambda ok: ("[dim]—[/dim]" if ok is None else   # noqa: E731
+                               "[green]PASS[/green]" if ok else "[red]FAIL[/red]")
             say(f"  {c['id']}  [dim]{c['type']:<18}[/dim] "
                 f"retrieval {mark(r_ok)}   answer {mark(a_ok)}   "
                 f"[dim]top-sim {row['top_similarity']}[/dim]")
-            say(f"        [dim]{c['question']}[/dim]")
+            say(f"        [dim]{esc(c['question'])}[/dim]")
             if not r_ok:
-                say(f"        [red]retrieval:[/red] {r_why}")
-            if not a_ok:
-                say(f"        [red]answer:[/red] {a_why}")
-            if a.verbose:
-                say(f"        [dim]→ {out.replace(chr(10), ' ')[:400]}[/dim]")
+                say(f"        [red]retrieval:[/red] {esc(r_why)}")
+            if a_ok is False:
+                say(f"        [red]answer:[/red] {esc(a_why)}")
+            if a.verbose and not a.retrieval_only:
+                say(f"        [dim]→ {esc(out.replace(chr(10), ' ')[:400])}[/dim]")
+            if a.verbose and a.retrieval_only:
+                say("        [dim]" + "  ".join(
+                    f"[{h['rank']}] {h['doc']} §{h['heading'] or '—'} {h['similarity']:.3f}"
+                    for h in hits) + "[/dim]")
 
         r_pass = sum(1 for _, r, _ in results if r["retrieval"])
         a_pass = sum(1 for _, r, _ in results if r["answer"])
-        obs.update(retrieval_passed=r_pass, answer_passed=a_pass, n=len(results))
+        obs.update(retrieval_passed=r_pass, n=len(results),
+                   answer_passed=None if a.retrieval_only else a_pass,
+                   retrieval_only=a.retrieval_only)
 
     say()
     # Per-type pass rate — a starting point, NOT the deliverable. The actual job
@@ -757,12 +835,14 @@ def cmd_eval(a) -> None:
     types = sorted({c["type"] for c, _, _ in results})
     table("per-type pass rate (not yet the two scorecards — see comment above)",
           ["type", "cases", "retrieval", "answer"],
-          [(t, n, f"{sum(1 for _, r, _ in results if r['type'] == t and r['retrieval'])}/{n}",
-            f"{sum(1 for _, r, _ in results if r['type'] == t and r['answer'])}/{n}")
-           for t, n in [(t, sum(1 for _, r, _ in results if r["type"] == t))
+          [(t, n, f"{sum(1 for _, r, _ in results if r['case_type'] == t and r['retrieval'])}/{n}",
+            "—" if a.retrieval_only else
+            f"{sum(1 for _, r, _ in results if r['case_type'] == t and r['answer'])}/{n}")
+           for t, n in [(t, sum(1 for _, r, _ in results if r["case_type"] == t))
                         for t in types] if n])
     say(f"\n  [bold]retrieval {r_pass}/{len(results)}[/bold] · "
-        f"[bold]answer {a_pass}/{len(results)}[/bold]")
+        + ("[dim]answer not run (--retrieval-only)[/dim]" if a.retrieval_only
+           else f"[bold]answer {a_pass}/{len(results)}[/bold]"))
     say("  [dim]A retrieval FAIL and an answer FAIL are different bugs with "
         "different fixes — that is why they do not add up to one number.[/dim]")
     say(f"  [dim]Every case is traced to {TRACE_FILE}; rerun after any change "
@@ -779,6 +859,14 @@ def cmd_eval(a) -> None:
 def cmd_ingest(a) -> None:
     say(f"[bold]OSHA 1926 RAG · ingest[/bold]  [dim]run {RUN_ID} → {TRACE_FILE}[/dim]")
     snapshot_guard(a.allow_snapshot_mismatch)
+    # ingest has no single outermost stage — load/chunk/embed/store each write
+    # their own — so the fingerprint is emitted once here rather than folded
+    # into one of them (see cmd_eval, which DOES have one outer stage("eval")
+    # and gets the fingerprint merged into that record instead).
+    fp = fingerprint()
+    for label, value in fp.items():
+        kv(label, value if value is not None else "—")
+    event("fingerprint", **fp)
     docs = load(a.formats.split(","), dedupe=not a.no_dedupe)
     chunks = chunk_all(docs, a.chunk_words, a.overlap, a.min_words)
     vecs = embed_all(chunks)
@@ -877,6 +965,9 @@ if __name__ == "__main__":
     g.add_argument("-k", type=int, default=4, help="chunks to retrieve")
     g.add_argument("--case", nargs="*", help="run only these ids, e.g. gold-003")
     g.add_argument("--verbose", action="store_true", help="print each answer")
+    g.add_argument("--retrieval-only", action="store_true",
+                   help="grade retrieval only — no model call, no API key needed. "
+                        "The deterministic half, runnable offline.")
     g.add_argument("--allow-snapshot-mismatch", action="store_true",
                     help="run even if the corpus snapshot differs from the "
                          "golden set (results not comparable to report.md)")
